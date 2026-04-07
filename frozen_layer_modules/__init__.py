@@ -1,71 +1,47 @@
 """
-frozen_layer_modules – distillation mode import guard.
+frozen_layer_modules — CKA distillation for Unsloth.
 
-When DISTILLATION="on" (env var or runtime call to set_mode()):
-  - SlowDriftTrainer and AlternatingLayerFreezer are imported and exposed.
+Always importable. Behaviour is controlled entirely by DistillationConfig;
+no import-time side-effects occur when DISTILLATION=False.
 
-When DISTILLATION="off" (default):
-  - No frozen-layer modules are loaded; both names are None.
-
-Graceful fallback: if the sub-modules fail to import for any reason, a warning
-is logged, both names remain None, and training continues in standard mode.
+Public API:
+    DistillationConfig   — config dataclass
+    load_config()        — config loader (env var + YAML + overrides)
+    SlowDriftTrainer     — UnslothTrainer subclass with CKA distillation
+    LayerFreezer         — stride-based layer freeze/unfreeze + hook registration
+    linear_cka()         — CKA similarity metric
+    cka_penalty()        — 1 - CKA, clamped to [0, 1]
 """
 import logging
-import os
 
 logger = logging.getLogger(__name__)
 
-# ---------------------------------------------------------------------------
-# Runtime state – mutated by set_mode()
-# ---------------------------------------------------------------------------
-DISTILLATION_MODE: bool = os.getenv("DISTILLATION", "off").lower() == "on"
+try:
+    from .config import DistillationConfig, load_config
+    from .cka_loss import cka_penalty, linear_cka
+    from .frozen_layer_distillation import LayerFreezer, get_transformer_layers
+    from .slow_drift_frozen_layers import SlowDriftTrainer
+except Exception as _exc:  # pragma: no cover
+    logger.warning(
+        "frozen_layer_modules: failed to import sub-modules (%s). "
+        "SlowDriftTrainer will not be available.",
+        _exc,
+    )
+    # Stubs so callers can guard with `if SlowDriftTrainer is not None`
+    DistillationConfig = None   # type: ignore[assignment,misc]
+    load_config = None          # type: ignore[assignment]
+    cka_penalty = None          # type: ignore[assignment]
+    linear_cka = None           # type: ignore[assignment]
+    LayerFreezer = None         # type: ignore[assignment,misc]
+    get_transformer_layers = None  # type: ignore[assignment]
+    SlowDriftTrainer = None     # type: ignore[assignment,misc]
 
-SlowDriftTrainer = None
-AlternatingLayerFreezer = None
-
-
-def _try_import() -> None:
-    """Attempt to load frozen-layer classes; fall back silently on failure."""
-    global SlowDriftTrainer, AlternatingLayerFreezer
-    try:
-        from .slow_drift_frozen_layers import SlowDriftTrainer as _SDT
-        from .frozen_layer_distillation import AlternatingLayerFreezer as _ALF
-        SlowDriftTrainer = _SDT
-        AlternatingLayerFreezer = _ALF
-    except Exception as exc:
-        logger.warning(
-            "Failed to import frozen_layer_modules. "
-            f"Training in standard mode. Error: {exc}"
-        )
-        SlowDriftTrainer = None
-        AlternatingLayerFreezer = None
-
-
-if DISTILLATION_MODE:
-    _try_import()
-
-
-def set_mode(value: str) -> bool:
-    """
-    Update DISTILLATION_MODE at runtime (called by Jupyter magic).
-
-    Args:
-        value: "on" or "off" (case-insensitive).
-
-    Returns:
-        True if distillation mode is now active, False otherwise.
-    """
-    global DISTILLATION_MODE
-    from .config import _validate_mode
-    validated = _validate_mode(value)
-    DISTILLATION_MODE = validated == "on"
-    os.environ["DISTILLATION"] = validated
-    if DISTILLATION_MODE:
-        try:
-            _try_import()
-        except Exception as exc:
-            logger.warning(
-                "Failed to import frozen_layer_modules. "
-                f"Training in standard mode. Error: {exc}"
-            )
-    return DISTILLATION_MODE
+__all__ = [
+    "DistillationConfig",
+    "load_config",
+    "SlowDriftTrainer",
+    "LayerFreezer",
+    "get_transformer_layers",
+    "linear_cka",
+    "cka_penalty",
+]

@@ -1,9 +1,7 @@
 """
 Unit tests for frozen_layer_modules.config
 
-Covers:
-  - Test-6.1.1: Flag parsing (on/off/uppercase/invalid)
-  - Test-6.1.2: Config file loading and env-var priority
+Covers all six flags, env-var parsing, YAML loading, and priority order.
 """
 import os
 import sys
@@ -12,102 +10,143 @@ from pathlib import Path
 
 import pytest
 
-# Ensure the package root is on sys.path so frozen_layer_modules is importable
 _ROOT = Path(__file__).resolve().parents[3]
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
 
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
+def _load(monkeypatch, env=None, yaml_text=None, overrides=None, tmp_path=None):
+    """Helper: set env vars, optionally write a YAML file, then load config."""
+    # Clear all distillation env vars
+    for var in ("DISTILLATION", "PHASE_UNFREEZE", "CKA_LAMBDA",
+                "PHASE_UNFREEZE_START", "PHASE_UNFREEZE_END", "FROZEN_LAYER_STRIDE"):
+        monkeypatch.delenv(var, raising=False)
 
-def _load(monkeypatch, env_value=None, config_path=None):
-    """Reload load_config with a specific env var value."""
-    if env_value is None:
-        monkeypatch.delenv("DISTILLATION", raising=False)
-    else:
-        monkeypatch.setenv("DISTILLATION", env_value)
+    if env:
+        for k, v in env.items():
+            monkeypatch.setenv(k, str(v))
+
+    config_path = None
+    if yaml_text and tmp_path:
+        p = tmp_path / ".distillation_config.yaml"
+        p.write_text(yaml_text)
+        config_path = p
+
     from frozen_layer_modules.config import load_config
-    return load_config(config_path=config_path)
+    return load_config(config_path=config_path, overrides=overrides)
 
 
 # ---------------------------------------------------------------------------
-# Flag parsing (Test-6.1.1)
+# Defaults
 # ---------------------------------------------------------------------------
 
-class TestFlagParsing:
-    def test_on_lowercase(self, monkeypatch):
-        cfg = _load(monkeypatch, "on")
-        assert cfg.distillation_mode == "on"
+class TestDefaults:
+    def test_all_defaults(self, monkeypatch, tmp_path):
+        cfg = _load(monkeypatch, tmp_path=tmp_path)
+        assert cfg.distillation is False
+        assert cfg.phase_unfreeze is False
+        assert cfg.cka_lambda == pytest.approx(0.1)
+        assert cfg.phase_unfreeze_start == pytest.approx(0.3)
+        assert cfg.phase_unfreeze_end == pytest.approx(0.7)
+        assert cfg.frozen_layer_stride == 2
 
-    def test_off_lowercase(self, monkeypatch):
-        cfg = _load(monkeypatch, "off")
-        assert cfg.distillation_mode == "off"
 
-    def test_on_uppercase(self, monkeypatch):
-        cfg = _load(monkeypatch, "ON")
-        assert cfg.distillation_mode == "on"
+# ---------------------------------------------------------------------------
+# Boolean flag parsing (DISTILLATION, PHASE_UNFREEZE)
+# ---------------------------------------------------------------------------
 
-    def test_off_uppercase(self, monkeypatch):
-        cfg = _load(monkeypatch, "OFF")
-        assert cfg.distillation_mode == "off"
+class TestBoolParsing:
+    @pytest.mark.parametrize("val", ["1", "true", "True", "TRUE", "yes", "on"])
+    def test_truthy_values(self, monkeypatch, tmp_path, val):
+        cfg = _load(monkeypatch, env={"DISTILLATION": val}, tmp_path=tmp_path)
+        assert cfg.distillation is True
 
-    def test_on_mixed_case(self, monkeypatch):
-        cfg = _load(monkeypatch, "On")
-        assert cfg.distillation_mode == "on"
+    @pytest.mark.parametrize("val", ["0", "false", "False", "FALSE", "no", "off"])
+    def test_falsy_values(self, monkeypatch, tmp_path, val):
+        cfg = _load(monkeypatch, env={"DISTILLATION": val}, tmp_path=tmp_path)
+        assert cfg.distillation is False
 
-    def test_invalid_warns_and_defaults_off(self, monkeypatch):
+    def test_invalid_bool_warns_and_defaults_false(self, monkeypatch, tmp_path):
         with warnings.catch_warnings(record=True) as caught:
             warnings.simplefilter("always")
-            cfg = _load(monkeypatch, "maybe")
-        assert cfg.distillation_mode == "off"
-        messages = [str(w.message) for w in caught]
-        assert any("maybe" in m for m in messages), f"Expected warning mentioning 'maybe', got: {messages}"
+            cfg = _load(monkeypatch, env={"DISTILLATION": "maybe"}, tmp_path=tmp_path)
+        assert cfg.distillation is False
+        assert any("maybe" in str(w.message) for w in caught)
 
-    def test_missing_env_defaults_off(self, monkeypatch):
-        cfg = _load(monkeypatch, env_value=None)
-        assert cfg.distillation_mode == "off"
+    def test_phase_unfreeze_parsed(self, monkeypatch, tmp_path):
+        cfg = _load(monkeypatch, env={"PHASE_UNFREEZE": "true"}, tmp_path=tmp_path)
+        assert cfg.phase_unfreeze is True
 
 
 # ---------------------------------------------------------------------------
-# Config file loading (Test-6.1.2)
+# Float / int flag parsing
 # ---------------------------------------------------------------------------
 
-class TestConfigLoading:
-    def test_yaml_loaded_when_present(self, monkeypatch, tmp_path):
-        monkeypatch.delenv("DISTILLATION", raising=False)
-        cfg_file = tmp_path / ".distillation_config.yaml"
-        cfg_file.write_text("distillation_mode: on\ndrift_weight: 0.2\n")
-        cfg = _load(monkeypatch, config_path=cfg_file)
-        assert cfg.distillation_mode == "on"
-        assert cfg.drift_weight == pytest.approx(0.2)
+class TestNumericParsing:
+    def test_cka_lambda_from_env(self, monkeypatch, tmp_path):
+        cfg = _load(monkeypatch, env={"CKA_LAMBDA": "0.5"}, tmp_path=tmp_path)
+        assert cfg.cka_lambda == pytest.approx(0.5)
+
+    def test_phase_unfreeze_start_from_env(self, monkeypatch, tmp_path):
+        cfg = _load(monkeypatch, env={"PHASE_UNFREEZE_START": "0.2"}, tmp_path=tmp_path)
+        assert cfg.phase_unfreeze_start == pytest.approx(0.2)
+
+    def test_phase_unfreeze_end_from_env(self, monkeypatch, tmp_path):
+        cfg = _load(monkeypatch, env={"PHASE_UNFREEZE_END": "0.8"}, tmp_path=tmp_path)
+        assert cfg.phase_unfreeze_end == pytest.approx(0.8)
+
+    def test_frozen_layer_stride_from_env(self, monkeypatch, tmp_path):
+        cfg = _load(monkeypatch, env={"FROZEN_LAYER_STRIDE": "3"}, tmp_path=tmp_path)
+        assert cfg.frozen_layer_stride == 3
+
+    def test_invalid_float_warns_and_uses_default(self, monkeypatch, tmp_path):
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            cfg = _load(monkeypatch, env={"CKA_LAMBDA": "abc"}, tmp_path=tmp_path)
+        assert cfg.cka_lambda == pytest.approx(0.1)
+        assert caught
+
+
+# ---------------------------------------------------------------------------
+# YAML loading
+# ---------------------------------------------------------------------------
+
+class TestYamlLoading:
+    def test_yaml_loaded(self, monkeypatch, tmp_path):
+        yaml = "distillation: true\ncka_lambda: 0.25\nfrozen_layer_stride: 4\n"
+        cfg = _load(monkeypatch, yaml_text=yaml, tmp_path=tmp_path)
+        assert cfg.distillation is True
+        assert cfg.cka_lambda == pytest.approx(0.25)
+        assert cfg.frozen_layer_stride == 4
 
     def test_yaml_missing_uses_defaults(self, monkeypatch, tmp_path):
-        monkeypatch.delenv("DISTILLATION", raising=False)
-        cfg = _load(monkeypatch, config_path=tmp_path / "nonexistent.yaml")
-        assert cfg.distillation_mode == "off"
-        assert cfg.drift_weight == pytest.approx(0.1)
+        cfg = _load(monkeypatch, tmp_path=tmp_path)
+        assert cfg.distillation is False
 
+    def test_yaml_bool_on_off(self, monkeypatch, tmp_path):
+        # PyYAML parses bare 'on'/'off' as Python booleans
+        yaml = "distillation: on\nphase_unfreeze: off\n"
+        cfg = _load(monkeypatch, yaml_text=yaml, tmp_path=tmp_path)
+        assert cfg.distillation is True
+        assert cfg.phase_unfreeze is False
+
+
+# ---------------------------------------------------------------------------
+# Priority order
+# ---------------------------------------------------------------------------
+
+class TestPriority:
     def test_env_overrides_yaml(self, monkeypatch, tmp_path):
-        cfg_file = tmp_path / ".distillation_config.yaml"
-        cfg_file.write_text("distillation_mode: off\n")
-        monkeypatch.setenv("DISTILLATION", "on")
-        cfg = _load(monkeypatch, env_value="on", config_path=cfg_file)
-        assert cfg.distillation_mode == "on"
+        yaml = "cka_lambda: 0.9\n"
+        cfg = _load(monkeypatch, env={"CKA_LAMBDA": "0.05"}, yaml_text=yaml, tmp_path=tmp_path)
+        assert cfg.cka_lambda == pytest.approx(0.05)  # env wins
 
-    def test_non_mode_keys_from_yaml_survive_env_override(self, monkeypatch, tmp_path):
-        cfg_file = tmp_path / ".distillation_config.yaml"
-        cfg_file.write_text("drift_weight: 0.42\nrestoration_factor: 0.95\n")
-        cfg = _load(monkeypatch, env_value="off", config_path=cfg_file)
-        assert cfg.drift_weight == pytest.approx(0.42)
-        assert cfg.restoration_factor == pytest.approx(0.95)
+    def test_overrides_beat_env(self, monkeypatch, tmp_path):
+        cfg = _load(monkeypatch, env={"CKA_LAMBDA": "0.5"},
+                    overrides={"cka_lambda": 0.01}, tmp_path=tmp_path)
+        assert cfg.cka_lambda == pytest.approx(0.01)  # override wins
 
-    def test_defaults_when_no_yaml_no_env(self, monkeypatch, tmp_path):
-        monkeypatch.delenv("DISTILLATION", raising=False)
-        cfg = _load(monkeypatch, config_path=tmp_path / "missing.yaml")
-        assert cfg.distillation_mode == "off"
-        assert cfg.drift_weight == pytest.approx(0.1)
-        assert cfg.restoration_factor == pytest.approx(0.99)
-        assert cfg.divergence_threshold == pytest.approx(0.15)
-        assert cfg.divergence_weight == pytest.approx(0.05)
+    def test_yaml_beats_defaults(self, monkeypatch, tmp_path):
+        yaml = "frozen_layer_stride: 3\n"
+        cfg = _load(monkeypatch, yaml_text=yaml, tmp_path=tmp_path)
+        assert cfg.frozen_layer_stride == 3
