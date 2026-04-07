@@ -603,6 +603,12 @@ export const useTrainingConfigStore = create<TrainingConfigStore>()(
         setFinetuneMLPModules: (finetuneMLPModules) =>
           set({ finetuneMLPModules }),
         setTargetModules: (targetModules) => set({ targetModules }),
+        setDistillation: (distillation) => set({ distillation }),
+        setPhaseUnfreeze: (phaseUnfreeze) => set({ phaseUnfreeze }),
+        setCkaLambda: (ckaLambda) => set({ ckaLambda }),
+        setPhaseUnfreezeStart: (phaseUnfreezeStart) => set({ phaseUnfreezeStart }),
+        setPhaseUnfreezeEnd: (phaseUnfreezeEnd) => set({ phaseUnfreezeEnd }),
+        setFrozenLayerStride: (frozenLayerStride) => set({ frozenLayerStride }),
         canProceed: () => canProceedForStep(get()),
         reset: () => {
           _trainOnCompletionsManuallySet = false;
@@ -629,7 +635,7 @@ export const useTrainingConfigStore = create<TrainingConfigStore>()(
     },
     {
       name: "unsloth_training_config_v1",
-      version: 9,
+      version: 10,
       migrate: (persisted, version) => {
         const s = persisted as Record<string, unknown>;
         if (version < 2 && s.datasetSubset == null && s.datasetConfig != null) {
@@ -664,6 +670,14 @@ export const useTrainingConfigStore = create<TrainingConfigStore>()(
           if (s.weightDecay === 0.01) {
             s.weightDecay = DEFAULT_HYPERPARAMS.weightDecay;
           }
+        }
+        if (version < 10) {
+          s.distillation ??= DEFAULT_HYPERPARAMS.distillation;
+          s.phaseUnfreeze ??= DEFAULT_HYPERPARAMS.phaseUnfreeze;
+          s.ckaLambda ??= DEFAULT_HYPERPARAMS.ckaLambda;
+          s.phaseUnfreezeStart ??= DEFAULT_HYPERPARAMS.phaseUnfreezeStart;
+          s.phaseUnfreezeEnd ??= DEFAULT_HYPERPARAMS.phaseUnfreezeEnd;
+          s.frozenLayerStride ??= DEFAULT_HYPERPARAMS.frozenLayerStride;
         }
         return s as unknown as TrainingConfigStore;
       },

@@ -128,6 +128,7 @@ export function ParamsSection(): ReactElement {
   const showVisionLora = store.isVisionModel && store.isDatasetImage === true;
   const [loraOpen, setLoraOpen] = useState(false);
   const [hyperOpen, setHyperOpen] = useState(false);
+  const [distillOpen, setDistillOpen] = useState(false);
   const [ctxInput, setCtxInput] = useState(String(store.contextLength));
   const ctxAnchorRef = useRef<HTMLDivElement>(null);
   const ctxItems = CONTEXT_LENGTHS.map(String);
@@ -919,6 +920,113 @@ export function ParamsSection(): ReactElement {
                   )}
                 </TabsContent>
               </Tabs>
+            </CollapsibleContent>
+          </Collapsible>
+          {/* Distillation Settings */}
+          <Collapsible open={distillOpen} onOpenChange={setDistillOpen}>
+            <CollapsibleTrigger className="flex w-full cursor-pointer items-center gap-1.5 text-xs text-muted-foreground">
+              <HugeiconsIcon
+                icon={ArrowDown01Icon}
+                className={`size-3.5 transition-transform ${distillOpen ? "rotate-180" : ""}`}
+              />
+              Distillation
+              {store.distillation && (
+                <span className="ml-1 rounded-full bg-primary/10 px-1.5 py-0.5 text-[10px] text-primary">on</span>
+              )}
+            </CollapsibleTrigger>
+            <CollapsibleContent className="mt-3 data-[state=open]:overflow-visible">
+              <div className="pt-1.5 flex flex-col gap-4">
+                <div className="flex items-center gap-2">
+                  <Checkbox
+                    id="distillation"
+                    checked={store.distillation}
+                    onCheckedChange={(v) => store.setDistillation(!!v)}
+                  />
+                  <label htmlFor="distillation" className="text-xs cursor-pointer text-muted-foreground">
+                    Enable distillation mode
+                  </label>
+                  <Tooltip>
+                    <TooltipTrigger asChild={true}>
+                      <button type="button" className="text-foreground/70 hover:text-foreground">
+                        <HugeiconsIcon icon={InformationCircleIcon} className="size-3" />
+                      </button>
+                    </TooltipTrigger>
+                    <TooltipContent>
+                      CKA-based representation-anchored distillation. Freezes every N-th layer and
+                      adds a CKA penalty to prevent catastrophic forgetting during reasoning distillation.
+                    </TooltipContent>
+                  </Tooltip>
+                </div>
+
+                {store.distillation && (
+                  <>
+                    <SliderRow
+                      label="Layer Stride"
+                      tooltip="Freeze every N-th transformer layer. Stride 2 freezes layers 0, 2, 4, …"
+                      value={store.frozenLayerStride}
+                      onChange={store.setFrozenLayerStride}
+                      min={1}
+                      max={8}
+                      step={1}
+                    />
+                    <SliderRow
+                      label="CKA Lambda"
+                      tooltip="Weight of the CKA penalty term added to the training loss. Higher values preserve representations more strongly."
+                      value={store.ckaLambda}
+                      onChange={store.setCkaLambda}
+                      min={0}
+                      max={1}
+                      step={0.01}
+                      format={(v) => v.toFixed(2)}
+                    />
+                    <div className="flex items-center gap-2">
+                      <Checkbox
+                        id="phaseUnfreeze"
+                        checked={store.phaseUnfreeze}
+                        onCheckedChange={(v) => store.setPhaseUnfreeze(!!v)}
+                      />
+                      <label htmlFor="phaseUnfreeze" className="text-xs cursor-pointer text-muted-foreground">
+                        Gradual layer unfreezing
+                      </label>
+                      <Tooltip>
+                        <TooltipTrigger asChild={true}>
+                          <button type="button" className="text-foreground/70 hover:text-foreground">
+                            <HugeiconsIcon icon={InformationCircleIcon} className="size-3" />
+                          </button>
+                        </TooltipTrigger>
+                        <TooltipContent>
+                          Release frozen layers progressively during training, deepest first. CKA lambda
+                          decays to zero by the unfreeze end point.
+                        </TooltipContent>
+                      </Tooltip>
+                    </div>
+                    {store.phaseUnfreeze && (
+                      <>
+                        <SliderRow
+                          label="Unfreeze Start"
+                          tooltip="Fraction of training steps at which gradual unfreezing begins (0 = immediately)."
+                          value={store.phaseUnfreezeStart}
+                          onChange={store.setPhaseUnfreezeStart}
+                          min={0}
+                          max={0.9}
+                          step={0.05}
+                          format={(v) => v.toFixed(2)}
+                        />
+                        <SliderRow
+                          label="Unfreeze End"
+                          tooltip="Fraction of training steps at which all layers are released and CKA lambda reaches zero."
+                          value={store.phaseUnfreezeEnd}
+                          onChange={store.setPhaseUnfreezeEnd}
+                          min={0.1}
+                          max={1}
+                          step={0.05}
+                          format={(v) => v.toFixed(2)}
+                        />
+                      </>
+                    )}
+                  </>
+                )}
+              </div>
             </CollapsibleContent>
           </Collapsible>
         </div>

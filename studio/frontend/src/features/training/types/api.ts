@@ -54,6 +54,12 @@ export interface TrainingStartRequest {
   wandb_project: string | null;
   enable_tensorboard: boolean;
   tensorboard_dir: string | null;
+  distillation: boolean;
+  phase_unfreeze: boolean;
+  cka_lambda: number;
+  phase_unfreeze_start: number;
+  phase_unfreeze_end: number;
+  frozen_layer_stride: number;
 }
 
 export interface TrainingStartResponse {

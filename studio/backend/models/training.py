@@ -128,6 +128,14 @@ class TrainingStartRequest(BaseModel):
     enable_tensorboard: bool = Field(False, description = "Enable TensorBoard logging")
     tensorboard_dir: Optional[str] = Field(None, description = "TensorBoard directory")
 
+    # Distillation parameters
+    distillation: bool = Field(False, description="Enable CKA-based representation-anchored distillation")
+    phase_unfreeze: bool = Field(False, description="Gradually unfreeze frozen layers during training")
+    cka_lambda: float = Field(0.1, description="Weight for the CKA penalty term")
+    phase_unfreeze_start: float = Field(0.3, description="Fraction of training steps when unfreezing begins")
+    phase_unfreeze_end: float = Field(0.7, description="Fraction of training steps when all layers are unfrozen")
+    frozen_layer_stride: int = Field(2, description="Freeze every N-th transformer layer (stride)")
+
     # GPU selection
     gpu_ids: Optional[List[int]] = Field(
         None,

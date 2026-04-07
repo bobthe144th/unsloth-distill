@@ -81,6 +81,12 @@ export interface TrainingConfigState {
   finetuneMLPModules: boolean;
   targetModules: string[];
   maxPositionEmbeddings: number | null;
+  distillation: boolean;
+  phaseUnfreeze: boolean;
+  ckaLambda: number;
+  phaseUnfreezeStart: number;
+  phaseUnfreezeEnd: number;
+  frozenLayerStride: number;
 }
 
 export interface TrainingConfigActions {
@@ -143,6 +149,12 @@ export interface TrainingConfigActions {
   setFinetuneAttentionModules: (value: boolean) => void;
   setFinetuneMLPModules: (value: boolean) => void;
   setTargetModules: (value: string[]) => void;
+  setDistillation: (value: boolean) => void;
+  setPhaseUnfreeze: (value: boolean) => void;
+  setCkaLambda: (value: number) => void;
+  setPhaseUnfreezeStart: (value: number) => void;
+  setPhaseUnfreezeEnd: (value: number) => void;
+  setFrozenLayerStride: (value: number) => void;
   canProceed: () => boolean;
   reset: () => void;
   resetToModelDefaults: () => void;

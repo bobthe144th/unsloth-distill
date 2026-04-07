@@ -108,5 +108,11 @@ export function buildTrainingStartPayload(
     tensorboard_dir: config.enableTensorboard
       ? config.tensorboardDir.trim() || null
       : null,
+    distillation: config.distillation,
+    phase_unfreeze: config.phaseUnfreeze,
+    cka_lambda: config.ckaLambda,
+    phase_unfreeze_start: config.phaseUnfreezeStart,
+    phase_unfreeze_end: config.phaseUnfreezeEnd,
+    frozen_layer_stride: config.frozenLayerStride,
   };
 }
