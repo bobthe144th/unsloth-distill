@@ -1,58 +1,65 @@
 """
-training_utils – trainer selection factory.
+training_utils — trainer selection factory.
 
-get_trainer() returns:
-  - SlowDriftTrainer (extends UnslothTrainer) when distillation_mode='on'
-  - UnslothTrainer                            when distillation_mode='off'
+get_trainer() returns a SlowDriftTrainer in all cases.
+When distillation_config.distillation is False (the default), SlowDriftTrainer
+is a transparent no-op wrapper around UnslothTrainer — no layers are frozen,
+no hooks are registered, no additional loss terms are added.
 
-Both trainers are HuggingFace-compatible and called via .train().
-All Unsloth speedups (Triton kernels, Q-GaLore, sample packing, etc.) are
-active in both paths.
+All Unsloth speedups are active in both modes.
 """
 import logging
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Union
 
 import torch.nn as nn
 
+from frozen_layer_modules.config import DistillationConfig, load_config
+from frozen_layer_modules.slow_drift_frozen_layers import SlowDriftTrainer
+
 logger = logging.getLogger(__name__)
 
-# Distillation-specific keys that must not be forwarded to TrainingArguments
-_DISTILLATION_KEYS = frozenset(
-    {"distillation_mode", "drift_weight", "restoration_factor",
-     "divergence_threshold", "divergence_weight"}
-)
+# Keys consumed by distillation config — not valid TrainingArguments fields
+_DISTILLATION_KEYS = frozenset({
+    "distillation", "phase_unfreeze", "cka_lambda",
+    "phase_unfreeze_start", "phase_unfreeze_end", "frozen_layer_stride",
+})
 
 
 def get_trainer(
     model: nn.Module,
-    config: Dict[str, Any],
-    base_model: Optional[nn.Module] = None,
+    config: Optional[Dict[str, Any]] = None,
     training_args=None,
+    distillation_config: Optional[Union[DistillationConfig, Dict[str, Any]]] = None,
     **trainer_kwargs,
-):
+) -> SlowDriftTrainer:
     """
-    Select and construct an appropriate trainer.
+    Construct a SlowDriftTrainer.
 
     Args:
-        model:         The model to train (fine-tuning model).
-        config:        Dict that may contain distillation settings and/or
-                       HuggingFace TrainingArguments fields.
-        base_model:    Required when distillation_mode='on'.
-        training_args: Optional pre-built TrainingArguments / SFTConfig.
-                       If None, a default TrainingArguments is constructed
-                       from non-distillation keys in config.
-        **trainer_kwargs: Forwarded to the trainer constructor (e.g.
-                          train_dataset, eval_dataset, tokenizer).
+        model:               The model to train.
+        config:              Optional flat dict.  Distillation keys are extracted
+                             into DistillationConfig; remaining keys are used to
+                             build TrainingArguments if training_args is None.
+        training_args:       Pre-built TrainingArguments / SFTConfig.  Takes
+                             precedence over config for HF trainer arguments.
+        distillation_config: Explicit DistillationConfig or dict.  When provided,
+                             takes precedence over distillation keys in config.
+        **trainer_kwargs:    Forwarded to SlowDriftTrainer (e.g. train_dataset,
+                             eval_dataset, tokenizer / processing_class).
 
     Returns:
-        SlowDriftTrainer when distillation_mode='on' (import succeeds),
-        UnslothTrainer   otherwise.
+        SlowDriftTrainer — behaves as plain UnslothTrainer when distillation=False.
     """
-    mode = config.get("distillation_mode", "off")
-    if isinstance(mode, str):
-        mode = mode.lower().strip()
+    config = config or {}
 
-    # Build TrainingArguments from config if not provided
+    # --- Resolve distillation config ---
+    if distillation_config is None:
+        dist_kwargs = {k: config[k] for k in _DISTILLATION_KEYS if k in config}
+        distillation_config = load_config(overrides=dist_kwargs or None)
+    elif isinstance(distillation_config, dict):
+        distillation_config = load_config(overrides=distillation_config)
+
+    # --- Build TrainingArguments if not provided ---
     if training_args is None:
         from unsloth.trainer import UnslothTrainingArguments
         hf_kwargs = {k: v for k, v in config.items() if k not in _DISTILLATION_KEYS}
@@ -61,25 +68,9 @@ def get_trainer(
             **hf_kwargs,
         )
 
-    if mode == "on":
-        try:
-            from frozen_layer_modules.slow_drift_frozen_layers import SlowDriftTrainer
-            distillation_config = {k: config[k] for k in _DISTILLATION_KEYS if k in config}
-            return SlowDriftTrainer(
-                base_model=base_model,
-                distillation_config=distillation_config,
-                model=model,
-                args=training_args,
-                **trainer_kwargs,
-            )
-        except Exception as exc:
-            logger.error(
-                "Failed to construct SlowDriftTrainer. "
-                f"Training in standard mode. Error: {exc}"
-            )
-            # re-raise config errors so callers know they're misconfigured
-            if isinstance(exc, (ValueError, TypeError)):
-                raise
-
-    from unsloth.trainer import UnslothTrainer
-    return UnslothTrainer(model=model, args=training_args, **trainer_kwargs)
+    return SlowDriftTrainer(
+        distillation_config=distillation_config,
+        model=model,
+        args=training_args,
+        **trainer_kwargs,
+    )

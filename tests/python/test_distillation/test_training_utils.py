@@ -1,17 +1,12 @@
 """
 Unit tests for training_utils.get_trainer()
 
-get_trainer() now returns:
-  - SlowDriftTrainer (extends UnslothTrainer) when distillation_mode='on'
-  - UnslothTrainer                            when distillation_mode='off'
-
-Tests that require torch/transformers/trl are skipped when those are absent.
+get_trainer() always returns a SlowDriftTrainer.
+When distillation=False it is a no-op wrapper around UnslothTrainer.
 """
-import copy
 import importlib
 import sys
 from pathlib import Path
-from unittest.mock import patch
 
 import pytest
 
@@ -28,122 +23,94 @@ pytestmark = pytest.mark.skipif(not _CAN_RUN, reason="torch/transformers/trl not
 
 if _CAN_RUN:
     import torch
-    import torch.nn as nn
     from torch.utils.data import TensorDataset
     from transformers import TrainingArguments
-    from unsloth.trainer import UnslothTrainer
+
+    from frozen_layer_modules.config import DistillationConfig
     from frozen_layer_modules.slow_drift_frozen_layers import SlowDriftTrainer
+    from unsloth.trainer import UnslothTrainer
     from training_utils import get_trainer
 
 
 def _make_tiny_model():
     from transformers import AutoConfig, AutoModelForCausalLM
     cfg = AutoConfig.for_model("gpt2")
-    cfg.n_layer = 2
-    cfg.n_head = 2
-    cfg.n_embd = 16
-    cfg.vocab_size = 128
-    cfg.n_positions = 32
+    cfg.n_layer = 2; cfg.n_head = 2; cfg.n_embd = 16
+    cfg.vocab_size = 64; cfg.n_positions = 16
     return AutoModelForCausalLM.from_config(cfg)
 
 
-def _make_training_args(tmp_path):
+def _args(tmp_path):
     return TrainingArguments(
-        output_dir=str(tmp_path),
-        max_steps=1,
-        no_cuda=True,
-        report_to="none",
+        output_dir=str(tmp_path), max_steps=1, no_cuda=True, report_to="none",
     )
 
 
-def _tiny_dataset():
-    ids = torch.randint(0, 128, (4, 8))
-    return TensorDataset(ids, ids)
+def _ds():
+    return TensorDataset(torch.randint(0, 64, (4, 8)), torch.randint(0, 64, (4, 8)))
 
 
-class _DictCollator:
+class _DC:
     def __call__(self, batch):
         ids = torch.stack([b[0] for b in batch])
         return {"input_ids": ids, "labels": ids}
 
 
 class TestGetTrainer:
-    def test_off_returns_unsloth_trainer(self, tmp_path):
+    def test_returns_slow_drift_trainer(self, tmp_path):
         model = _make_tiny_model()
-        args = _make_training_args(tmp_path)
-        trainer = get_trainer(
-            model, {"distillation_mode": "off"},
-            training_args=args,
-        )
+        trainer = get_trainer(model, training_args=_args(tmp_path),
+                              train_dataset=_ds(), data_collator=_DC())
+        assert isinstance(trainer, SlowDriftTrainer)
         assert isinstance(trainer, UnslothTrainer)
 
-    def test_on_returns_slow_drift_trainer(self, tmp_path):
+    def test_distillation_false_no_layers_frozen(self, tmp_path):
         model = _make_tiny_model()
-        base = copy.deepcopy(model)
-        args = _make_training_args(tmp_path)
-        ds = _tiny_dataset()
+        get_trainer(model,
+                    config={"distillation": False},
+                    training_args=_args(tmp_path),
+                    train_dataset=_ds(), data_collator=_DC())
+        # All parameters still trainable (no extra freeze applied)
+        assert all(p.requires_grad for p in model.parameters())
+
+    def test_distillation_true_freezes_layers(self, tmp_path):
+        model = _make_tiny_model()
         trainer = get_trainer(
             model,
-            {"distillation_mode": "on", "drift_weight": 0.1},
-            base_model=base,
-            training_args=args,
-            train_dataset=ds,
-            data_collator=_DictCollator(),
+            distillation_config=DistillationConfig(distillation=True, frozen_layer_stride=2),
+            training_args=_args(tmp_path),
+            train_dataset=_ds(), data_collator=_DC(),
+        )
+        assert trainer._layer_freezer is not None
+        assert len(trainer._layer_freezer.frozen_indices) > 0
+
+    def test_distillation_keys_stripped_from_training_args(self, tmp_path):
+        """Distillation keys in config dict must not reach TrainingArguments."""
+        model = _make_tiny_model()
+        # Should not raise even with all distillation keys present
+        trainer = get_trainer(
+            model,
+            config={
+                "distillation": False,
+                "phase_unfreeze": False,
+                "cka_lambda": 0.1,
+                "phase_unfreeze_start": 0.3,
+                "phase_unfreeze_end": 0.7,
+                "frozen_layer_stride": 2,
+                "output_dir": str(tmp_path),
+            },
+            train_dataset=_ds(), data_collator=_DC(),
         )
         assert isinstance(trainer, SlowDriftTrainer)
 
-    def test_on_without_base_model_raises(self, tmp_path):
+    def test_explicit_distillation_config_overrides_dict(self, tmp_path):
         model = _make_tiny_model()
-        args = _make_training_args(tmp_path)
-        with pytest.raises(ValueError, match="base_model"):
-            get_trainer(
-                model,
-                {"distillation_mode": "on"},
-                base_model=None,
-                training_args=args,
-            )
-
-    def test_mode_case_insensitive(self, tmp_path):
-        model = _make_tiny_model()
-        args = _make_training_args(tmp_path)
+        cfg = DistillationConfig(distillation=True, cka_lambda=0.42)
         trainer = get_trainer(
-            model, {"distillation_mode": "OFF"},
-            training_args=args,
+            model,
+            config={"distillation": False, "cka_lambda": 0.99},
+            distillation_config=cfg,
+            training_args=_args(tmp_path),
+            train_dataset=_ds(), data_collator=_DC(),
         )
-        assert isinstance(trainer, UnslothTrainer)
-
-    def test_missing_mode_defaults_to_off(self, tmp_path):
-        model = _make_tiny_model()
-        args = _make_training_args(tmp_path)
-        trainer = get_trainer(model, {}, training_args=args)
-        assert isinstance(trainer, UnslothTrainer)
-
-    def test_distillation_keys_not_forwarded_to_training_args(self, tmp_path):
-        """Distillation keys must be stripped before building TrainingArguments."""
-        model = _make_tiny_model()
-        # Should not raise even with all distillation keys present
-        trainer = get_trainer(model, {
-            "distillation_mode": "off",
-            "drift_weight": 0.1,
-            "restoration_factor": 0.99,
-            "divergence_threshold": 0.15,
-            "divergence_weight": 0.05,
-            "output_dir": str(tmp_path),
-        })
-        assert isinstance(trainer, UnslothTrainer)
-
-    def test_fallback_on_import_error(self, tmp_path, monkeypatch):
-        """When frozen_layer_modules fails to import, UnslothTrainer is returned."""
-        model = _make_tiny_model()
-        base = copy.deepcopy(model)
-        args = _make_training_args(tmp_path)
-
-        with patch.dict("sys.modules", {"frozen_layer_modules.slow_drift_frozen_layers": None}):
-            trainer = get_trainer(
-                model,
-                {"distillation_mode": "on"},
-                base_model=base,
-                training_args=args,
-            )
-        assert isinstance(trainer, UnslothTrainer)
-        assert not isinstance(trainer, SlowDriftTrainer)
+        assert trainer._cfg.cka_lambda == pytest.approx(0.42)
