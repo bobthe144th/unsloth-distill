@@ -1,254 +1,299 @@
 """
-SlowDriftTrainer: distillation-aware training loop that combines:
-  - drift_penalty   : L2 distance of fine-tune parameters from their initial values
-  - divergence_penalty: KL divergence between fine-tune and base model logits
-Post-epoch: partially restores frozen layer parameters toward their initial values
-            using the configured restoration_factor.
+SlowDriftTrainer: extends UnslothTrainer with frozen-layer distillation.
+
+Inheriting from UnslothTrainer (→ SFTTrainer) preserves all Unsloth speedups:
+  - Custom Triton kernels (already patched into the model at load time)
+  - Q-GaLore / embedding-LR optimizer via UnslothTrainingArguments
+  - Sample packing and padding-free batching
+  - Flash Attention 2
+
+Distillation additions (injected via HuggingFace's standard hooks):
+  - compute_loss()    : adds drift_penalty + divergence_penalty to CE loss
+  - training_step()   : calls AlternatingLayerFreezer.step() before each step
+  - DistillationCallback : snapshots params at epoch start, restores at epoch end
 """
 import logging
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Tuple, Union
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from transformers import TrainerCallback, TrainerControl, TrainerState
+from transformers import TrainingArguments as HFTrainingArguments
 
+from unsloth.trainer import UnslothTrainer
 from .frozen_layer_distillation import AlternatingLayerFreezer
 
 logger = logging.getLogger(__name__)
 
 
-class SlowDriftTrainer:
+# ---------------------------------------------------------------------------
+# Epoch-level callback: snapshot → restore
+# ---------------------------------------------------------------------------
+
+class _DistillationCallback(TrainerCallback):
+    """Snapshots model params at epoch start; restores frozen layers at epoch end."""
+
+    def __init__(self, distillation_trainer: "SlowDriftTrainer") -> None:
+        self._dt = distillation_trainer
+
+    def on_epoch_begin(
+        self,
+        args: HFTrainingArguments,
+        state: TrainerState,
+        control: TrainerControl,
+        **kwargs,
+    ) -> TrainerControl:
+        model = kwargs.get("model", self._dt.model)
+        self._dt._epoch_snapshot = {
+            name: param.detach().clone().cpu()
+            for name, param in model.named_parameters()
+        }
+        logger.debug("DistillationCallback: epoch snapshot captured.")
+        return control
+
+    def on_epoch_end(
+        self,
+        args: HFTrainingArguments,
+        state: TrainerState,
+        control: TrainerControl,
+        **kwargs,
+    ) -> TrainerControl:
+        model = kwargs.get("model", self._dt.model)
+        self._dt._restore_frozen_layers(model)
+        self._dt._log_layer_drift_norms(model)
+        return control
+
+
+# ---------------------------------------------------------------------------
+# SlowDriftTrainer
+# ---------------------------------------------------------------------------
+
+class SlowDriftTrainer(UnslothTrainer):
     """
-    Distillation trainer with frozen-layer drift regularisation.
+    Distillation-aware trainer built on top of UnslothTrainer.
+
+    All Unsloth speed-ups (Q-GaLore, embedding LR, sample packing, padding-free,
+    Triton kernels) are inherited automatically.  Three distillation-specific
+    behaviours are added via standard HuggingFace hooks:
+
+      1. compute_loss()   — appends drift_penalty + divergence_penalty to CE loss.
+      2. training_step()  — calls AlternatingLayerFreezer.step() before each step.
+      3. callback         — snapshots params at epoch start; restores at epoch end.
 
     Args:
-        model:      Fine-tuning model (gradients enabled on non-frozen layers).
-        base_model: Reference model (kept frozen in inference mode).
-        config:     Dict with optional keys:
-                      drift_weight         (default 0.1)
-                      restoration_factor   (default 0.99)
-                      divergence_threshold (default 0.15)
-                      divergence_weight    (default 0.05)
+        base_model: Frozen reference model (kept in eval mode, no gradients).
+                    Required; raises ValueError when None.
+        distillation_config: Dict with optional distillation hyperparameters:
+            drift_weight         (default 0.1)
+            restoration_factor   (default 0.99)
+            divergence_threshold (default 0.15)
+            divergence_weight    (default 0.05)
+        *args / **kwargs: Forwarded verbatim to UnslothTrainer / SFTTrainer.
 
     Raises:
         ValueError: if base_model is None.
-        ValueError: if model is not a recognisable transformer architecture.
+        ValueError: if model has no accessible transformer layer list
+                    (detected by AlternatingLayerFreezer).
     """
 
     def __init__(
         self,
-        model: nn.Module,
-        base_model: Optional[nn.Module],
-        config: Dict[str, Any],
-    ):
+        base_model: Optional[nn.Module] = None,
+        distillation_config: Optional[Dict[str, Any]] = None,
+        *args,
+        **kwargs,
+    ) -> None:
         if base_model is None:
             raise ValueError(
                 "Distillation mode requires base_model parameter. "
                 "Provide it to SlowDriftTrainer()."
             )
 
-        # Architecture check – raises ValueError for non-transformers
-        self.layer_freezer = AlternatingLayerFreezer(model)
+        cfg = distillation_config or {}
+        self._base_model = base_model
+        self._drift_weight = float(cfg.get("drift_weight", 0.1))
+        self._restoration_factor = float(cfg.get("restoration_factor", 0.99))
+        self._divergence_threshold = float(cfg.get("divergence_threshold", 0.15))
+        self._divergence_weight = float(cfg.get("divergence_weight", 0.05))
 
-        self.model = model
-        self.base_model = base_model
-        self.config = config
-
-        self.drift_weight = float(config.get("drift_weight", 0.1))
-        self.restoration_factor = float(config.get("restoration_factor", 0.99))
-        self.divergence_threshold = float(config.get("divergence_threshold", 0.15))
-        self.divergence_weight = float(config.get("divergence_weight", 0.05))
+        # UnslothTrainer.__init__ sets self.model
+        super().__init__(*args, **kwargs)
 
         # Freeze base model entirely
-        for p in self.base_model.parameters():
+        for p in self._base_model.parameters():
             p.requires_grad = False
-        self.base_model.eval()
+        self._base_model.eval()
 
-        # Snapshot of fine-tune model parameters at initialisation time
-        # (used for drift computation and post-epoch restoration)
-        self._base_snapshot: Dict[str, torch.Tensor] = {
-            name: param.detach().clone()
-            for name, param in model.named_parameters()
+        # Architecture validation + alternating layer freezer
+        # (raises ValueError for non-transformer models)
+        self._layer_freezer = AlternatingLayerFreezer(self.model)
+
+        # Initial snapshot (updated at each epoch start by the callback)
+        self._epoch_snapshot: Dict[str, torch.Tensor] = {
+            name: param.detach().clone().cpu()
+            for name, param in self.model.named_parameters()
         }
 
-        # Start with even layers frozen
-        self.layer_freezer.freeze_even_layers()
+        # Register the distillation callback
+        self.add_callback(_DistillationCallback(self))
 
         logger.info(
-            "SlowDriftTrainer initialised | "
-            f"drift_weight={self.drift_weight} | "
-            f"restoration_factor={self.restoration_factor} | "
-            f"divergence_threshold={self.divergence_threshold} | "
-            f"divergence_weight={self.divergence_weight} | "
-            f"frozen_layers={sorted(self.layer_freezer.get_frozen_indices())}"
+            "SlowDriftTrainer ready | "
+            f"drift_weight={self._drift_weight} | "
+            f"restoration_factor={self._restoration_factor} | "
+            f"divergence_threshold={self._divergence_threshold} | "
+            f"divergence_weight={self._divergence_weight} | "
+            f"frozen_layers={sorted(self._layer_freezer.get_frozen_indices())}"
         )
+
+    # ------------------------------------------------------------------
+    # HuggingFace hook: called once per batch
+    # ------------------------------------------------------------------
+
+    def compute_loss(
+        self,
+        model: nn.Module,
+        inputs: Dict[str, Any],
+        return_outputs: bool = False,
+        **kwargs,
+    ) -> Union[torch.Tensor, Tuple[torch.Tensor, Any]]:
+        """
+        Standard CE loss + drift_penalty + divergence_penalty.
+
+        Plugs into HF Trainer's gradient accumulation, mixed-precision,
+        and gradient checkpointing as-is.
+        """
+        outputs = model(**inputs)
+        ce_loss = outputs.loss
+
+        drift = self._compute_drift_penalty(model)
+        div = self._compute_divergence_penalty(outputs.logits, inputs)
+
+        total_loss = ce_loss + drift + div
+
+        if logger.isEnabledFor(logging.DEBUG):
+            logger.debug(
+                "compute_loss | ce=%.4f drift=%.4f div=%.4f total=%.4f",
+                ce_loss.item(), drift.item(), div.item(), total_loss.item(),
+            )
+
+        return (total_loss, outputs) if return_outputs else total_loss
+
+    # ------------------------------------------------------------------
+    # HuggingFace hook: called once per optimizer step
+    # ------------------------------------------------------------------
+
+    def training_step(
+        self,
+        model: nn.Module,
+        inputs: Dict[str, Any],
+        *args,
+        **kwargs,
+    ) -> torch.Tensor:
+        """Advance the AlternatingLayerFreezer before each step."""
+        self._layer_freezer.step()
+        return super().training_step(model, inputs, *args, **kwargs)
 
     # ------------------------------------------------------------------
     # Penalty computations
     # ------------------------------------------------------------------
 
-    def compute_drift_penalty(self) -> torch.Tensor:
+    def _compute_drift_penalty(self, model: nn.Module) -> torch.Tensor:
         """
-        Mean L2 distance of current model parameters from the initial snapshot,
+        Mean L2 distance of currently-frozen params from their epoch-start snapshot,
         weighted by drift_weight.
         """
-        device = next(self.model.parameters()).device
+        device = next(model.parameters()).device
         total = torch.tensor(0.0, device=device)
         count = 0
-        for name, param in self.model.named_parameters():
-            if name in self._base_snapshot:
-                base = self._base_snapshot[name].to(device)
-                total = total + (param - base).pow(2).mean()
+        for name, param in model.named_parameters():
+            if not param.requires_grad and name in self._epoch_snapshot:
+                snap = self._epoch_snapshot[name].to(device)
+                total = total + (param - snap).pow(2).mean()
                 count += 1
-        return self.drift_weight * (total / max(count, 1))
+        return self._drift_weight * (total / max(count, 1))
 
-    def compute_divergence_penalty(
+    def _compute_divergence_penalty(
         self,
         logits: torch.Tensor,
-        base_logits: torch.Tensor,
+        inputs: Dict[str, Any],
     ) -> torch.Tensor:
         """
-        KL-divergence penalty applied only when the divergence exceeds
-        divergence_threshold, weighted by divergence_weight.
-
-        Args:
-            logits:      Fine-tune model logits  (batch, seq, vocab).
-            base_logits: Base model logits        (batch, seq, vocab).
-
-        Returns:
-            Scalar penalty tensor (≥ 0).
+        KL-divergence penalty between fine-tune and base model output distributions.
+        Only applied at positions where the base model is confident
+        (max softmax probability > divergence_threshold).
         """
-        log_probs = F.log_softmax(logits, dim=-1)
-        base_probs = F.softmax(base_logits.detach(), dim=-1)
-        kl = F.kl_div(log_probs, base_probs, reduction="batchmean")
-        penalty = F.relu(kl - self.divergence_threshold)
-        return self.divergence_weight * penalty
-
-    # ------------------------------------------------------------------
-    # Post-epoch restoration
-    # ------------------------------------------------------------------
-
-    def restore_frozen_layers(self) -> None:
-        """
-        Linearly interpolate frozen layer parameters back toward their initial
-        snapshot values:  p ← p * restoration_factor + p0 * (1 - restoration_factor)
-        """
-        device = next(self.model.parameters()).device
-        frozen = self.layer_freezer.get_frozen_indices()
-        layers = self.layer_freezer.layers
-
-        for i in frozen:
-            for name, param in layers[i].named_parameters():
-                # Match by suffix against the full parameter name in the snapshot
-                for snap_key, snap_val in self._base_snapshot.items():
-                    if snap_key.endswith(name):
-                        target = snap_val.to(device)
-                        with torch.no_grad():
-                            param.data.mul_(self.restoration_factor).add_(
-                                target * (1.0 - self.restoration_factor)
-                            )
-                        break
-
-    # ------------------------------------------------------------------
-    # Training loop
-    # ------------------------------------------------------------------
-
-    def train_epoch(
-        self,
-        dataloader,
-        optimizer: Optional[torch.optim.Optimizer] = None,
-    ) -> Dict[str, float]:
-        """
-        Run one full training epoch over the provided dataloader.
-
-        Args:
-            dataloader: Iterable yielding dicts of tensors (model inputs).
-            optimizer:  Optional pre-built optimizer.  If None, a default
-                        AdamW is constructed over trainable parameters.
-
-        Returns:
-            Dict with averaged metrics:
-              loss, drift_penalty, divergence_penalty, steps
-        """
-        if optimizer is None:
-            trainable = [p for p in self.model.parameters() if p.requires_grad]
-            optimizer = torch.optim.AdamW(trainable, lr=2e-5)
-
-        self.model.train()
-        total_loss = total_drift = total_div = 0.0
-        steps = 0
-
-        for batch in dataloader:
-            optimizer.zero_grad()
-
-            device = next(self.model.parameters()).device
-            inputs = {
-                k: v.to(device) if isinstance(v, torch.Tensor) else v
-                for k, v in batch.items()
-            }
-
-            outputs = self.model(**inputs)
-            with torch.no_grad():
-                base_outputs = self.base_model(**inputs)
-
-            standard_loss = outputs.loss if hasattr(outputs, "loss") else outputs[0]
-            drift = self.compute_drift_penalty()
-            div = self.compute_divergence_penalty(outputs.logits, base_outputs.logits)
-
-            loss = standard_loss + drift + div
-            loss.backward()
-            optimizer.step()
-
-            total_loss += standard_loss.item()
-            total_drift += drift.item()
-            total_div += div.item()
-            steps += 1
-
-        # Post-epoch restoration of frozen layer weights
-        self.restore_frozen_layers()
-        self._log_epoch_metrics(steps, total_loss, total_drift, total_div)
-
-        n = max(steps, 1)
-        return {
-            "loss": total_loss / n,
-            "drift_penalty": total_drift / n,
-            "divergence_penalty": total_div / n,
-            "steps": steps,
+        device = logits.device
+        fwd_keys = {"input_ids", "attention_mask", "token_type_ids", "position_ids"}
+        base_inputs = {
+            k: v.to(device) if isinstance(v, torch.Tensor) else v
+            for k, v in inputs.items()
+            if k in fwd_keys
         }
+        base_inputs.setdefault("use_cache", False)
+
+        self._base_model.to(device)
+        with torch.no_grad():
+            base_out = self._base_model(**base_inputs)
+        base_logits = base_out.logits
+
+        # Align sequence dimension (shift for next-token prediction)
+        seq = min(logits.shape[1], base_logits.shape[1])
+        ft = logits[:, :seq, :]
+        base = base_logits[:, :seq, :]
+
+        p_base = F.softmax(base, dim=-1)
+        log_p_ft = F.log_softmax(ft, dim=-1)
+
+        # Confidence mask
+        mask = p_base.max(dim=-1).values > self._divergence_threshold  # [B, T]
+        if not mask.any():
+            return torch.tensor(0.0, device=device)
+
+        kl_per_pos = F.kl_div(log_p_ft, p_base, reduction="none").sum(dim=-1)
+        return self._divergence_weight * kl_per_pos[mask].mean()
 
     # ------------------------------------------------------------------
-    # Logging helpers
+    # Post-epoch restoration (called by _DistillationCallback)
     # ------------------------------------------------------------------
 
-    def _log_epoch_metrics(
-        self,
-        steps: int,
-        total_loss: float,
-        total_drift: float,
-        total_div: float,
-    ) -> None:
-        n = max(steps, 1)
-        logger.info(
-            f"Epoch complete | steps={steps} | "
-            f"loss={total_loss/n:.4f} | "
-            f"drift={total_drift/n:.4f} | "
-            f"divergence={total_div/n:.4f}"
-        )
-        self._log_layer_drift_norms()
+    def _restore_frozen_layers(self, model: nn.Module) -> None:
+        """
+        Interpolate frozen layer params toward their epoch-start snapshot:
+            p ← restoration_factor * p0 + (1 - restoration_factor) * p
+        """
+        device = next(model.parameters()).device
+        rf = self._restoration_factor
+        frozen_indices = self._layer_freezer.get_frozen_indices()
+        layers = self._layer_freezer.layers
 
-    def _log_layer_drift_norms(self) -> None:
-        """Log per-frozen-layer parameter drift norms for diagnostics."""
-        device = next(self.model.parameters()).device
-        for i in sorted(self.layer_freezer.get_frozen_indices()):
-            layer = self.layer_freezer.layers[i]
+        with torch.no_grad():
+            for i in frozen_indices:
+                for name, param in layers[i].named_parameters():
+                    for snap_key, snap_val in self._epoch_snapshot.items():
+                        if snap_key.endswith(name):
+                            p0 = snap_val.to(device)
+                            param.data.mul_(1.0 - rf).add_(p0 * rf)
+                            break
+
+    # ------------------------------------------------------------------
+    # Diagnostics (called by _DistillationCallback)
+    # ------------------------------------------------------------------
+
+    def _log_layer_drift_norms(self, model: nn.Module) -> None:
+        """Log per-frozen-layer drift norms for monitoring."""
+        device = next(model.parameters()).device
+        for i in sorted(self._layer_freezer.get_frozen_indices()):
+            layer = self._layer_freezer.layers[i]
             norms = []
             for name, param in layer.named_parameters():
-                for snap_key, snap_val in self._base_snapshot.items():
+                for snap_key, snap_val in self._epoch_snapshot.items():
                     if snap_key.endswith(name):
                         norms.append((param - snap_val.to(device)).norm().item())
                         break
             if norms:
                 logger.info(
-                    f"  Layer {i} drift norms: "
-                    f"{[f'{v:.4f}' for v in norms]}"
+                    "  Layer %d drift norms (post-restore): %s",
+                    i, [f"{v:.4f}" for v in norms],
                 )
