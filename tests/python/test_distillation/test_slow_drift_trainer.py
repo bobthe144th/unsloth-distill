@@ -85,8 +85,23 @@ class TestLayerFreezer:
         freezer = LayerFreezer(model, stride=2)
         assert freezer.frozen_indices == {0, 2}
         for i in {0, 2}:
-            for p in freezer.layers[i].parameters():
-                assert not p.requires_grad
+            for name, p in freezer.layers[i].named_parameters():
+                if "norm" in name.lower():
+                    # LayerNorm/RMSNorm must stay trainable.
+                    assert p.requires_grad, f"layer {i} norm param {name!r} should be trainable"
+                else:
+                    assert not p.requires_grad, f"layer {i} non-norm param {name!r} should be frozen"
+
+    def test_norm_params_never_frozen(self):
+        """LayerNorm parameters in frozen layers must always stay requires_grad=True."""
+        model = _make_tiny_model(4)
+        freezer = LayerFreezer(model, stride=1)  # freeze every layer
+        for i in range(4):
+            for name, p in freezer.layers[i].named_parameters():
+                if "norm" in name.lower():
+                    assert p.requires_grad, (
+                        f"layer {i} norm param {name!r} was incorrectly frozen"
+                    )
 
     def test_stride_1_freezes_all_layers(self):
         model = _make_tiny_model(4)
@@ -114,6 +129,27 @@ class TestLayerFreezer:
         for layer in freezer.layers:
             for p in layer.parameters():
                 assert p.requires_grad
+
+    def test_release_does_not_unfreeze_pre_frozen_params(self):
+        """
+        Params that were already requires_grad=False before LayerFreezer runs
+        (e.g. LoRA base weights) must stay frozen after release_layers().
+        """
+        model = _make_tiny_model(4)
+        # Simulate LoRA: manually freeze one non-norm param before LayerFreezer.
+        target_param = None
+        for name, p in model.model.layers[0].named_parameters():
+            if "norm" not in name.lower():
+                p.requires_grad = False
+                target_param = p
+                break
+        assert target_param is not None
+
+        freezer = LayerFreezer(model, stride=2)
+        freezer.release_all()
+
+        # The pre-frozen param must still be frozen after release.
+        assert not target_param.requires_grad
 
     def test_release_adds_to_optimizer(self):
         model = _make_tiny_model(4)

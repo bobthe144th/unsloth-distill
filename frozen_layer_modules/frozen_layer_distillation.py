@@ -17,6 +17,11 @@ import torch.nn as nn
 logger = logging.getLogger(__name__)
 
 
+def _is_norm_param(name: str) -> bool:
+    """Return True for LayerNorm / RMSNorm parameters (should never be frozen)."""
+    return "norm" in name.lower()
+
+
 # ---------------------------------------------------------------------------
 # Layer discovery (identical attribute walk to before)
 # ---------------------------------------------------------------------------
@@ -65,6 +70,10 @@ class LayerFreezer:
         self.layers: nn.ModuleList = get_transformer_layers(model)
         self.n_layers: int = len(self.layers)
         self.frozen_indices: Set[int] = set()
+        # Tracks exactly which parameters we froze per layer so that release
+        # never accidentally touches base-model weights (already frozen by LoRA)
+        # or LayerNorm parameters (kept trainable throughout).
+        self._our_frozen: Dict[int, List[nn.Parameter]] = {}
         self._apply_initial_freeze()
 
     # ------------------------------------------------------------------
@@ -83,8 +92,24 @@ class LayerFreezer:
         )
 
     def _freeze_layer(self, idx: int) -> None:
-        for p in self.layers[idx].parameters():
-            p.requires_grad = False
+        """
+        Freeze non-norm, currently-trainable parameters in layer ``idx``.
+
+        LayerNorm / RMSNorm parameters are intentionally skipped: freezing them
+        while adjacent layers train causes normalisation mismatch that undoes
+        their unfreezing benefit later.
+
+        Only parameters that are *currently* trainable are recorded — this
+        avoids touching base-model weights that LoRA has already frozen.
+        """
+        frozen = []
+        for name, p in self.layers[idx].named_parameters():
+            if _is_norm_param(name):
+                continue
+            if p.requires_grad:
+                p.requires_grad = False
+                frozen.append(p)
+        self._our_frozen[idx] = frozen
         self.frozen_indices.add(idx)
 
     def release_layers(
@@ -107,7 +132,7 @@ class LayerFreezer:
         for idx in list(indices):
             if idx not in self.frozen_indices:
                 continue
-            for p in self.layers[idx].parameters():
+            for p in self._our_frozen.pop(idx, []):
                 p.requires_grad = True
                 newly_trainable.append(p)
             self.frozen_indices.discard(idx)
