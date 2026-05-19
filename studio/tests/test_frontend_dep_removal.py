@@ -26,7 +26,7 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[2]
 HEAD_PKG = REPO / "studio/frontend/package.json"
 HEAD_LOCK = REPO / "studio/frontend/package-lock.json"
-SCRIPT = REPO / "scripts/check_frontend_dep_removal.py"
+SCRIPT = REPO / "studio/scripts/check_frontend_dep_removal.py"
 
 
 @dataclass
