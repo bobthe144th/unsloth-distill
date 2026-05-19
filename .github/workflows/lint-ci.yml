@@ -72,7 +72,7 @@ jobs:
             studio
 
       - name: Python ruff check (whole repo)
-        # The narrow rule set in pyproject.toml [tool.ruff.lint]
+        # The narrow rule set in ruff.toml [lint]
         # selects E9 / F63 / F7 / F82 -- syntax errors, broken
         # comparisons, undefined names. The whole repo passes today,
         # so this is a hard gate.
