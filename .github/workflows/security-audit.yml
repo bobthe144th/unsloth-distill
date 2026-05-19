@@ -886,6 +886,7 @@ jobs:
         # downloaded tarball, and only fetches from registry.npmjs.org.
         # Initially non-blocking so the baseline can settle; drop
         # continue-on-error once the baseline is clean for a week.
+        continue-on-error: true
         run: |
           set -o pipefail
           LOG=logs-scan-npm.txt
