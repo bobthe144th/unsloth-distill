@@ -95,10 +95,14 @@ jobs:
         # confirms the frontend dist is wired into Tauri, but skips the AppImage
         # / .deb production. Code signing is irrelevant because we never produce
         # a distributable artifact.
+        # Run from studio/ so Tauri CLI resolves src-tauri/tauri.conf.json
+        # relative to the working directory (Tauri 2 CLI searches for
+        # src-tauri/tauri.conf.json starting from CWD, not repo root).
+        working-directory: studio
         env:
           TAURI_SIGNING_PRIVATE_KEY: ''
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ''
-        run: npx --prefix studio tauri build --debug --no-bundle
+        run: npx tauri build --debug --no-bundle
 
       - name: Inspect produced binary
         run: |
