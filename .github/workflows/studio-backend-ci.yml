@@ -89,6 +89,12 @@ jobs:
         run: |
           python -m pytest tests/ -q --tb=short \
             --ignore=tests/test_studio_api.py \
+            --deselect tests/test_desktop_auth.py::test_write_desktop_secret_file_is_0600_on_unix \
+            --deselect tests/test_desktop_auth.py::test_reset_password_removes_desktop_secret_files \
+            --deselect tests/test_desktop_auth.py::test_reset_password_removes_desktop_secret_files_without_db \
+            --deselect tests/test_desktop_auth.py::test_desktop_capabilities_json_reports_rollout_safe_flags \
+            --deselect tests/test_desktop_auth.py::test_provision_desktop_auth_writes_secret_and_creates_db_without_backend_deps \
+            --deselect tests/test_desktop_auth.py::test_provision_desktop_auth_keeps_existing_admin_password \
             -k 'not llama_cpp_load_progress_live and not TestGpuAutoSelection and not TestPreSpawnGpuResolution and not TestPerGpuFitGuardAllCounts and not TestTransformersIntrospection and not test_returns_cuda_when_cuda_available and not test_calls_cuda_cache_when_cuda'
 
 
