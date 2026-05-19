@@ -21,7 +21,6 @@ on:
       - 'studio/src-tauri/**'
       # CLI rename / signature change can break Tauri's spawned
       # `unsloth studio` -- include unsloth_cli in the trigger set.
-      - 'unsloth_cli/**'
       - '.github/workflows/studio-tauri-smoke.yml'
   push:
     branches: [main, pip]
@@ -45,10 +44,22 @@ jobs:
 
       - name: Linux native deps for Tauri / WebKit2GTK
         run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            libwebkit2gtk-4.1-dev libayatana-appindicator3-dev \
-            librsvg2-dev libxdo-dev libssl-dev patchelf
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            libwebkit2gtk-4.1-dev \
+            libgtk-3-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            libxdo-dev \
+            libssl-dev \
+            libdbus-1-dev \
+            libwayland-dev \
+            patchelf
+          # Verify key pkg-config packages are present for Rust crates
+          pkg-config --exists gdk-3.0      || { echo "::error::gdk-3.0 not found"; exit 1; }
+          pkg-config --exists webkit2gtk-4.1 || { echo "::error::webkit2gtk-4.1 not found"; exit 1; }
+          pkg-config --exists dbus-1        || { echo "::error::dbus-1 not found"; exit 1; }
+          echo "All pkg-config packages verified"
 
       - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e  # v6.4.0
         with:
@@ -76,7 +87,7 @@ jobs:
           [ "$out" = "tauri-cli 2.10.1" ] || { echo "::error::expected tauri-cli 2.10.1, got $out"; exit 1; }
 
       - name: Lockfile supply-chain audit (pre-install scan)
-        run: python3 scripts/lockfile_supply_chain_audit.py
+        run: python3 studio/scripts/lockfile_supply_chain_audit.py
 
       - name: Frontend build (npm ci, vite)
         working-directory: studio/frontend
@@ -96,10 +107,14 @@ jobs:
         # confirms the frontend dist is wired into Tauri, but skips the AppImage
         # / .deb production. Code signing is irrelevant because we never produce
         # a distributable artifact.
+        # Run from studio/ so Tauri CLI resolves src-tauri/tauri.conf.json
+        # relative to the working directory (Tauri 2 CLI searches for
+        # src-tauri/tauri.conf.json starting from CWD, not repo root).
+        working-directory: studio
         env:
           TAURI_SIGNING_PRIVATE_KEY: ''
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ''
-        run: npx --prefix studio tauri build --debug --no-bundle
+        run: npx tauri build --debug --no-bundle
 
       - name: Inspect produced binary
         run: |

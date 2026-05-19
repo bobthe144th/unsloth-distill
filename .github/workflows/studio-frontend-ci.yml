@@ -15,8 +15,7 @@ on:
   pull_request:
     paths:
       - 'studio/frontend/**'
-      - 'scripts/check_frontend_dep_removal.py'
-      - 'tests/studio/test_frontend_dep_removal.py'
+      - 'studio/scripts/check_frontend_dep_removal.py'
       - '.github/workflows/studio-frontend-ci.yml'
   push:
     branches: [main, pip]
@@ -66,7 +65,7 @@ jobs:
       # pure-Python read-only; safe to call ahead of every install.
       - name: Lockfile supply-chain audit (pre-install scan)
         working-directory: ${{ github.workspace }}
-        run: python3 scripts/lockfile_supply_chain_audit.py
+        run: python3 studio/scripts/lockfile_supply_chain_audit.py
 
       - name: Lockfile must agree with package.json (npm ci is strict)
         # Lifecycle scripts (esbuild native-binary postinstall, etc.) are
@@ -101,10 +100,10 @@ jobs:
         run: |
           git fetch --no-tags --depth=1 origin \
             "${{ github.base_ref }}:refs/remotes/origin/${{ github.base_ref }}"
-          python3 scripts/check_frontend_dep_removal.py \
+          python3 studio/scripts/check_frontend_dep_removal.py \
             --base "origin/${{ github.base_ref }}" \
             --enumerate-dead
-          python3 tests/studio/test_frontend_dep_removal.py
+          python3 studio/tests/test_frontend_dep_removal.py
 
       - name: Typecheck
         run: npm run typecheck

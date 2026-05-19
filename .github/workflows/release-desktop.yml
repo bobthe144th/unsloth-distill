@@ -190,17 +190,12 @@ jobs:
                   sys.exit(f'Could not download {filename} from PyPI ({last_error})')
           PY
 
-          if [ -f scripts/stamp_studio_release.py ]; then
-            mapfile -t dists < <(find "$RUNNER_TEMP/pypi-unsloth-dist" -type f \( -name '*.whl' -o -name '*.tar.gz' \) | sort)
-            if [ "${#dists[@]}" -eq 0 ]; then
-              echo "No PyPI wheel/sdist artifacts downloaded for unsloth==$PYPI_VERSION" >&2
-              exit 1
-            fi
-            python3 scripts/stamp_studio_release.py --verify-dist "$RUNNER_TEMP/pypi-unsloth-dist" --expected "$STUDIO_VERSION"
-          else
-            echo "scripts/stamp_studio_release.py not found; release-desktop requires #5308 to verify the PyPI Studio stamp." >&2
+          mapfile -t dists < <(find "$RUNNER_TEMP/pypi-unsloth-dist" -type f \( -name '*.whl' -o -name '*.tar.gz' \) | sort)
+          if [ "${#dists[@]}" -eq 0 ]; then
+            echo "No PyPI wheel/sdist artifacts downloaded for unsloth==$PYPI_VERSION" >&2
             exit 1
           fi
+          python3 studio/scripts/stamp_studio_release.py --verify-dist "$RUNNER_TEMP/pypi-unsloth-dist" --expected "$STUDIO_VERSION"
 
       - name: Guard public updater channel version
         if: ${{ !inputs.draft }}

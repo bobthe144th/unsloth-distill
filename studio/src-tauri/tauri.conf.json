@@ -50,8 +50,8 @@
     "license": "AGPL-3.0-only",
     "targets": ["app", "appimage", "deb", "dmg", "nsis"],
     "resources": {
-      "../../install.sh": "install.sh",
-      "../../install.ps1": "install.ps1"
+      "../install.sh": "install.sh",
+      "../install.ps1": "install.ps1"
     },
     "icon": [
       "icons/32x32.png",
