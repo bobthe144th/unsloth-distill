@@ -2,7 +2,7 @@
 # Copyright 2026-present the Unsloth AI Inc. team. All rights reserved.
 
 # Studio API & Auth Tests -- HTTP-level integration tests for the
-# FastAPI surface. No Playwright, no model UI; tests/studio/test_studio_api_smoke.py
+# FastAPI surface. No Playwright, no model UI; studio/tests/studio/test_studio_api_smoke.py
 # runs ~30 s and asserts:
 #   - CORS hardening (no wildcard + credentials, no bootstrap leak)
 #   - /api/system + /api/system/hardware require auth
@@ -21,11 +21,8 @@ on:
   pull_request:
     paths:
       - 'studio/**'
-      - 'unsloth/**'
-      - 'unsloth_cli/**'
       - 'install.sh'
-      - 'pyproject.toml'
-      - 'tests/studio/**'
+      - 'studio/tests/studio/**'
       - '.github/workflows/studio-api-smoke.yml'
   push:
     branches: [main, pip]
@@ -147,7 +144,7 @@ jobs:
         env:
           BASE_URL: http://127.0.0.1:18893
           STUDIO_AUTH_DIR: /home/runner/.unsloth/studio/auth
-        run: python tests/studio/studio_api_smoke.py
+        run: python studio/tests/studio/studio_api_smoke.py
 
       - name: Stop Studio
         if: always()

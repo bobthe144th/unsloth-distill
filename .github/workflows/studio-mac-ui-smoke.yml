@@ -14,11 +14,8 @@ on:
   pull_request:
     paths:
       - 'studio/**'
-      - 'unsloth/**'
-      - 'unsloth_cli/**'
       - 'install.sh'
-      - 'pyproject.toml'
-      - 'tests/studio/**'
+      - 'studio/tests/studio/**'
       - '.github/workflows/studio-mac-ui-smoke.yml'
   push:
     branches: [main, pip]
@@ -107,7 +104,7 @@ jobs:
         # the crash hitting 100% of three retry attempts -- not a
         # rare race but a hard reproduction. Belt-and-suspenders fix:
         # the test scripts pass --single-process to Chromium (see
-        # tests/studio/playwright_chat_ui.py) AND we patch
+        # studio/tests/studio/playwright_chat_ui.py) AND we patch
         # pipeTransport.js below to swallow JSON parse errors instead
         # of crashing the driver Node process. Both together let the
         # in-script retry recover from any residual flakes.
@@ -199,7 +196,7 @@ jobs:
           max_attempts=3
           while : ; do
             set +e
-            python tests/studio/playwright_chat_ui.py 2>&1 | tee logs/playwright_attempt_${attempt}.log
+            python studio/tests/studio/playwright_chat_ui.py 2>&1 | tee logs/playwright_attempt_${attempt}.log
             rc=${PIPESTATUS[0]}
             set -e
             if [ "$rc" -eq 0 ]; then
@@ -289,7 +286,7 @@ jobs:
           max_attempts=3
           while : ; do
             set +e
-            python tests/studio/playwright_extra_ui.py 2>&1 | tee logs/playwright_extra_attempt_${attempt}.log
+            python studio/tests/studio/playwright_extra_ui.py 2>&1 | tee logs/playwright_extra_attempt_${attempt}.log
             rc=${PIPESTATUS[0]}
             set -e
             if [ "$rc" -eq 0 ]; then

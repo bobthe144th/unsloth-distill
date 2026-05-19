@@ -21,7 +21,6 @@ on:
       - 'studio/src-tauri/**'
       # CLI rename / signature change can break Tauri's spawned
       # `unsloth studio` -- include unsloth_cli in the trigger set.
-      - 'unsloth_cli/**'
       - '.github/workflows/studio-tauri-smoke.yml'
   push:
     branches: [main, pip]
@@ -76,7 +75,7 @@ jobs:
           [ "$out" = "tauri-cli 2.10.1" ] || { echo "::error::expected tauri-cli 2.10.1, got $out"; exit 1; }
 
       - name: Lockfile supply-chain audit (pre-install scan)
-        run: python3 scripts/lockfile_supply_chain_audit.py
+        run: python3 studio/scripts/lockfile_supply_chain_audit.py
 
       - name: Frontend build (npm ci, vite)
         working-directory: studio/frontend

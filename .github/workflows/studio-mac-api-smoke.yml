@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 # Copyright 2026-present the Unsloth AI Inc. team. All rights reserved.
 
-# Mac counterpart to studio-api-smoke.yml. Same tests/studio/
+# Mac counterpart to studio-api-smoke.yml. Same studio/tests/studio/
 # studio_api_smoke.py exercise (CORS hardening, auth state machine,
 # JWT expiry, API key lifecycle, /v1/models / /v1/embeddings /
 # /v1/responses, endpoint-by-endpoint auth audit) but on a real
@@ -14,11 +14,8 @@ on:
   pull_request:
     paths:
       - 'studio/**'
-      - 'unsloth/**'
-      - 'unsloth_cli/**'
       - 'install.sh'
-      - 'pyproject.toml'
-      - 'tests/studio/**'
+      - 'studio/tests/studio/**'
       - '.github/workflows/studio-mac-api-smoke.yml'
   push:
     branches: [main, pip]
@@ -134,7 +131,7 @@ jobs:
         env:
           BASE_URL: http://127.0.0.1:18895
           STUDIO_AUTH_DIR: /Users/runner/.unsloth/studio/auth
-        run: python tests/studio/studio_api_smoke.py
+        run: python studio/tests/studio/studio_api_smoke.py
 
       - name: Stop Studio
         if: always()

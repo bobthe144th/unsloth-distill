@@ -2,7 +2,7 @@
 # Copyright 2026-present the Unsloth AI Inc. team. All rights reserved.
 
 # Windows counterpart to studio-api-smoke.yml / studio-mac-api-smoke.yml.
-# Same tests/studio/studio_api_smoke.py exercise (CORS hardening, auth
+# Same studio/tests/studio/studio_api_smoke.py exercise (CORS hardening, auth
 # state machine, JWT expiry, API key lifecycle, /v1/models /
 # /v1/embeddings / /v1/responses, endpoint-by-endpoint auth audit) but
 # on the FREE windows-latest runner. The file-mode hardening section
@@ -15,11 +15,8 @@ on:
   pull_request:
     paths:
       - 'studio/**'
-      - 'unsloth/**'
-      - 'unsloth_cli/**'
       - 'install.ps1'
-      - 'pyproject.toml'
-      - 'tests/studio/**'
+      - 'studio/tests/studio/**'
       - '.github/workflows/studio-windows-api-smoke.yml'
   push:
     branches: [main, pip]
@@ -227,7 +224,7 @@ jobs:
         # unset, which is correct on every OS.
         env:
           BASE_URL: http://127.0.0.1:18895
-        run: python tests/studio/studio_api_smoke.py
+        run: python studio/tests/studio/studio_api_smoke.py
 
       - name: Stop Studio
         if: always()

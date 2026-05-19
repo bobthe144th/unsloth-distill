@@ -20,13 +20,10 @@ on:
   pull_request:
     paths:
       - 'studio/**'
-      - 'unsloth/**'
-      - 'unsloth_cli/**'
       - 'install.sh'
-      - 'pyproject.toml'
       # The Playwright test files themselves -- a PR that ONLY edits
       # the test must still trigger UI CI.
-      - 'tests/studio/**'
+      - 'studio/tests/studio/**'
       - '.github/workflows/studio-ui-smoke.yml'
   push:
     branches: [main, pip]
@@ -170,7 +167,7 @@ jobs:
           STUDIO_UI_STRICT: '1'
         run: |
           mkdir -p logs/playwright
-          python tests/studio/playwright_chat_ui.py
+          python studio/tests/studio/playwright_chat_ui.py
 
       - name: Stop Studio (chat-ui ends with Shutdown click; this is belt-and-suspenders)
         if: always()
@@ -221,7 +218,7 @@ jobs:
           GGUF_VARIANT: ${{ env.GGUF_VARIANT }}
         run: |
           mkdir -p logs/playwright_extra
-          python tests/studio/playwright_extra_ui.py
+          python studio/tests/studio/playwright_extra_ui.py
 
       - name: Stop second Studio
         if: always()
@@ -267,7 +264,7 @@ jobs:
           STUDIO_UI_STRICT: '1'
         run: |
           mkdir -p logs/playwright_ime
-          python tests/studio/playwright_chat_ime_i18n.py
+          python studio/tests/studio/playwright_chat_ime_i18n.py
 
       - name: Stop third Studio
         if: always()

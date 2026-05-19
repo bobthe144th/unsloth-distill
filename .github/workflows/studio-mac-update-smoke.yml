@@ -26,8 +26,6 @@ on:
       - 'studio/install_python_stack.py'
       - 'studio/install_llama_prebuilt.py'
       - 'studio/backend/requirements/**'
-      - 'unsloth_cli/commands/studio.py'
-      - 'pyproject.toml'
       - '.github/workflows/studio-mac-update-smoke.yml'
   push:
     branches: [main, pip]
