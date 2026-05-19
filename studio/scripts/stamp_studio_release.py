@@ -40,7 +40,7 @@ def _atomic_write_text(path: Path, data: str, encoding: str = "utf-8") -> None:
         raise
 
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
+REPO_ROOT = Path(__file__).resolve().parents[2]
 BUILD_INFO_PATH = (
     REPO_ROOT / "studio" / "backend" / "utils" / "_studio_release_build.py"
 )

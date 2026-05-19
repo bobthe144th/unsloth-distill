@@ -52,7 +52,7 @@ except ImportError:
     )
     sys.exit(2)
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
+REPO_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_WORKFLOWS_DIR = REPO_ROOT / ".github" / "workflows"
 
 BANNED_TRIGGERS: tuple[str, ...] = ("pull_request_target",)

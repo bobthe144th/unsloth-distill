@@ -74,7 +74,7 @@ import re
 import sys
 from pathlib import Path
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
+REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -652,8 +652,8 @@ def audit_cargo_lockfile(path: Path) -> list[Finding]:
 # ─────────────────────────────────────────────────────────────────────
 
 
-DEFAULT_NPM_LOCKFILES = ("frontend/package-lock.json",)
-DEFAULT_CARGO_LOCKFILES = ("src-tauri/Cargo.lock",)
+DEFAULT_NPM_LOCKFILES = ("studio/frontend/package-lock.json",)
+DEFAULT_CARGO_LOCKFILES = ("studio/src-tauri/Cargo.lock",)
 
 
 def main(argv: list[str] | None = None) -> int:
