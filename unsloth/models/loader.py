@@ -308,6 +308,16 @@ class FastLanguageModel(FastLlamaModel):
             if is_dist:
                 device_map = distributed_device_map
 
+        # Honour offline env vars BEFORE FastModel delegation so 8bit /
+        # full-finetuning / qat paths also receive local_files_only.
+        if not kwargs.get("local_files_only", False):
+            _offline = {"1", "true", "yes", "on"}
+            if (
+                os.environ.get("TRANSFORMERS_OFFLINE", "").strip().lower() in _offline
+                or os.environ.get("HF_HUB_OFFLINE", "").strip().lower() in _offline
+            ):
+                kwargs["local_files_only"] = True
+
         if load_in_8bit or full_finetuning or qat_scheme is not None:
             return FastModel.from_pretrained(
                 model_name = model_name,
@@ -439,12 +449,15 @@ class FastLanguageModel(FastLlamaModel):
         peft_error = None
         model_config = None
         peft_config = None
+        local_files_only = kwargs.get("local_files_only", False)
+
         try:
             model_config = AutoConfig.from_pretrained(
                 model_name,
                 token = token,
                 revision = revision,
                 trust_remote_code = trust_remote_code,
+                local_files_only = local_files_only,
             )
             is_model = True
         except ImportError:
@@ -470,6 +483,7 @@ class FastLanguageModel(FastLlamaModel):
                 token = token,
                 revision = revision,
                 trust_remote_code = trust_remote_code,
+                local_files_only = local_files_only,
             )
             is_peft = True
         except ImportError:
@@ -566,6 +580,7 @@ class FastLanguageModel(FastLlamaModel):
                 model_name,
                 token = token,
                 trust_remote_code = trust_remote_code,
+                local_files_only = local_files_only,
             )
 
         if not was_disabled:
@@ -1049,12 +1064,24 @@ class FastModel(FastBaseModel):
         peft_error = None
         model_config = None
         peft_config = None
+        local_files_only = kwargs.get("local_files_only", False)
+        # Mirror env-var fallback for direct callers (FastVisionModel / FastTextModel).
+        if not local_files_only:
+            _offline = {"1", "true", "yes", "on"}
+            if (
+                os.environ.get("TRANSFORMERS_OFFLINE", "").strip().lower() in _offline
+                or os.environ.get("HF_HUB_OFFLINE", "").strip().lower() in _offline
+            ):
+                local_files_only = True
+                kwargs["local_files_only"] = True
+
         try:
             model_config = AutoConfig.from_pretrained(
                 model_name,
                 token = token,
                 revision = revision,
                 trust_remote_code = trust_remote_code,
+                local_files_only = local_files_only,
             )
             is_model = True
         except ImportError:
@@ -1080,6 +1107,7 @@ class FastModel(FastBaseModel):
                 token = token,
                 revision = revision,
                 trust_remote_code = trust_remote_code,
+                local_files_only = local_files_only,
             )
             is_peft = True
         except ImportError:
@@ -1142,9 +1170,6 @@ class FastModel(FastBaseModel):
                 )
             os.environ["UNSLOTH_DISABLE_STATIC_GENERATION"] = "1"
             os.environ["UNSLOTH_HIGH_PRECISION_LAYERNORM"] = "1"
-            # Disable flex_attention for Gemma-4: flex compile overhead is 2.7x slower
-            # than SDPA. Our attention patch ensures Q/K/V dtype alignment for SDPA.
-            os.environ["UNSLOTH_ENABLE_FLEX_ATTENTION"] = "0"
         # Gemma 3N must be before Gemma 3
         elif "gemma3n" in model_types_all:
             if transformers_version < Version("4.53.0"):
@@ -1201,12 +1226,19 @@ class FastModel(FastBaseModel):
             # Granite-4 rms norms are stored as 16 bit, but we upcast
             os.environ["UNSLOTH_HIGH_PRECISION_LAYERNORM"] = "1"
             os.environ["UNSLOTH_DISABLE_STATIC_GENERATION"] = "1"
-        # Olmo 2
+        # OLMo 2
         elif "olmo2" in model_types_all and transformers_version < Version(
             "4.50.0.dev0"
         ):
             raise RuntimeError(
                 "Unsloth: OLMo-2 only works on transformers >= 4.50.0." + NIGHTLY
+            )
+        # OLMo 3
+        elif "olmo3" in model_types_all and transformers_version < Version(
+            "4.57.0.dev0"
+        ):
+            raise RuntimeError(
+                "Unsloth: OLMo-3 only works on transformers >= 4.57.0." + LATEST
             )
         elif "falcon_h1" in model_types_all:
             # Falcon must use float32 Triton ie TRITON_F32_DEFAULT = 'ieee'
@@ -1330,6 +1362,7 @@ class FastModel(FastBaseModel):
                 model_name,
                 token = token,
                 trust_remote_code = trust_remote_code,
+                local_files_only = local_files_only,
             )
 
         if not was_disabled:
