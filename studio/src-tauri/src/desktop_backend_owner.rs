@@ -337,19 +337,19 @@ fn write_private_file(path: &Path, body: &[u8]) -> Result<(), String> {
     }
 }
 
-fn set_private_dir_permissions(path: &Path) {
+fn set_private_dir_permissions(_path: &Path) {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o700));
+        let _ = std::fs::set_permissions(_path, std::fs::Permissions::from_mode(0o700));
     }
 }
 
-fn set_private_file_permissions(path: &Path) {
+fn set_private_file_permissions(_path: &Path) {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600));
+        let _ = std::fs::set_permissions(_path, std::fs::Permissions::from_mode(0o600));
     }
 }
 
@@ -747,13 +747,15 @@ fn process_liveness(pid: u32) -> PreviousAppPidStatus {
 #[cfg(windows)]
 fn process_liveness(pid: u32) -> PreviousAppPidStatus {
     use windows_sys::Win32::Foundation::{CloseHandle, GetLastError, ERROR_INVALID_PARAMETER};
-    use windows_sys::Win32::System::Threading::{
-        OpenProcess, WaitForSingleObject, SYNCHRONIZE, WAIT_OBJECT_0, WAIT_TIMEOUT,
-    };
+    use windows_sys::Win32::System::Threading::{OpenProcess, WaitForSingleObject};
+    // These constants moved or were removed in windows-sys 0.59; values are stable Win32 ABI.
+    const SYNCHRONIZE: u32 = 0x0010_0000;
+    const WAIT_OBJECT_0: u32 = 0;
+    const WAIT_TIMEOUT: u32 = 258;
 
     unsafe {
         let handle = OpenProcess(SYNCHRONIZE, 0, pid);
-        if handle == 0 {
+        if handle.is_null() {
             return if GetLastError() == ERROR_INVALID_PARAMETER {
                 PreviousAppPidStatus::Dead
             } else {
