@@ -64,13 +64,9 @@ jobs:
 
       - name: Build Tauri Windows installer (unsigned)
         working-directory: studio
-        env:
-          # Empty key disables updater-artifact signing; no Azure creds = no exe signing.
-          TAURI_SIGNING_PRIVATE_KEY: ''
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ''
-        # Override signCommand to null so tauri.windows.conf.json's trusted-signing-cli
-        # entry is not used (it's not installed on this runner).
-        run: npx tauri build --config '{"bundle":{"windows":{"signCommand":null}}}'
+        # Disable exe signing (signCommand null) and updater-artifact signing
+        # (createUpdaterArtifacts false) — neither tool nor key is available here.
+        run: npx tauri build --config '{"bundle":{"createUpdaterArtifacts":false,"windows":{"signCommand":null}}}'
 
       - name: Locate installer
         shell: bash
