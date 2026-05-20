@@ -38,6 +38,7 @@ async fn run_cli_probe(bin: &Path, args: &[&str]) -> bool {
 
     #[cfg(windows)]
     {
+        #[allow(unused_imports)]
         use std::os::windows::process::CommandExt;
         cmd.creation_flags(crate::process::CREATE_NO_WINDOW);
     }
@@ -76,6 +77,7 @@ async fn probe_cli_capability(bin: &Path) -> Option<DesktopCapability> {
 
     #[cfg(windows)]
     {
+        #[allow(unused_imports)]
         use std::os::windows::process::CommandExt;
         cmd.creation_flags(crate::process::CREATE_NO_WINDOW);
     }
