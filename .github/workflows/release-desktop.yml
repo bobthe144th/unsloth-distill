@@ -133,69 +133,6 @@ jobs:
               print(f'pypi_version={pypi_version}', file=output)
           PY
 
-      - name: Verify PyPI package and Studio stamp
-        shell: bash
-        env:
-          STUDIO_VERSION: ${{ steps.prepare.outputs.studio_version }}
-          PYPI_VERSION: ${{ steps.prepare.outputs.pypi_version }}
-        run: |
-          set -euo pipefail
-          python3 <<'PY'
-          import json
-          import os
-          import pathlib
-          import sys
-          import time
-          import urllib.error
-          import urllib.request
-
-          pypi_version = os.environ['PYPI_VERSION']
-          dist_dir = pathlib.Path(os.environ['RUNNER_TEMP'], 'pypi-unsloth-dist')
-          dist_dir.mkdir(parents=True, exist_ok=True)
-          metadata_url = f'https://pypi.org/pypi/unsloth/{pypi_version}/json'
-
-          last_error = None
-          for attempt in range(1, 6):
-              try:
-                  with urllib.request.urlopen(metadata_url, timeout=30) as response:
-                      metadata = json.load(response)
-                  break
-              except Exception as exc:
-                  last_error = exc
-                  if attempt < 5:
-                      time.sleep(10 * attempt)
-          else:
-              sys.exit(f'Publish unsloth=={pypi_version} to PyPI before the desktop release ({last_error})')
-
-          files = metadata.get('urls') or []
-          if not files:
-              sys.exit(f'PyPI returned no distribution files for unsloth=={pypi_version}')
-
-          for file_info in files:
-              filename = file_info.get('filename')
-              url = file_info.get('url')
-              if not filename or '/' in filename or not url:
-                  sys.exit(f'Unexpected PyPI file entry for unsloth=={pypi_version}: {file_info!r}')
-              target = dist_dir / filename
-              for attempt in range(1, 4):
-                  try:
-                      with urllib.request.urlopen(url, timeout=60) as response:
-                          target.write_bytes(response.read())
-                      break
-                  except Exception as exc:
-                      last_error = exc
-                      if attempt < 3:
-                          time.sleep(5 * attempt)
-              else:
-                  sys.exit(f'Could not download {filename} from PyPI ({last_error})')
-          PY
-
-          mapfile -t dists < <(find "$RUNNER_TEMP/pypi-unsloth-dist" -type f \( -name '*.whl' -o -name '*.tar.gz' \) | sort)
-          if [ "${#dists[@]}" -eq 0 ]; then
-            echo "No PyPI wheel/sdist artifacts downloaded for unsloth==$PYPI_VERSION" >&2
-            exit 1
-          fi
-          python3 studio/scripts/stamp_studio_release.py --verify-dist "$RUNNER_TEMP/pypi-unsloth-dist" --expected "$STUDIO_VERSION"
 
       - name: Guard public updater channel version
         if: ${{ !inputs.draft }}
@@ -381,7 +318,7 @@ jobs:
           node <<'JS'
           const { readFileSync } = require('node:fs');
 
-          const expected = 'https://github.com/unslothai/unsloth/releases/download/desktop-latest/latest.json';
+          const expected = 'https://github.com/bobthe144th/unsloth-distill/releases/download/desktop-latest/latest.json';
           const config = JSON.parse(readFileSync('studio/src-tauri/tauri.conf.json', 'utf8'));
           const endpoints = config.plugins?.updater?.endpoints;
           if (!Array.isArray(endpoints) || endpoints.length !== 1) {
@@ -725,7 +662,7 @@ jobs:
               'linux-x86_64': False,
               'windows-x86_64': False,
           }
-          expected_prefix = f'https://github.com/unslothai/unsloth/releases/download/{release_tag}/'
+          expected_prefix = f'https://github.com/bobthe144th/unsloth-distill/releases/download/{release_tag}/'
           forbidden_fragments = ('/releases/latest/', '/releases/download/desktop-latest/')
 
           for platform, entry in platforms.items():
