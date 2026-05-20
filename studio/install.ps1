@@ -1494,6 +1494,14 @@ shell.Run cmd, 0, False
     } else {
         Remove-Item Env:UNSLOTH_STUDIO_HOME -ErrorAction SilentlyContinue
     }
+    # Prepend the detected Python directory to PATH so that `unsloth studio setup`
+    # can find Python via the 'python' fallback even when py.exe registration lags
+    # (winget's py.exe registry update may not be visible in the same session).
+    # This is safe: it only affects the current process environment.
+    if ($DetectedPython -and $DetectedPython.Path) {
+        $detectedPythonDir = Split-Path -Parent $DetectedPython.Path
+        $env:Path = "$detectedPythonDir;$env:Path"
+    }
     $studioArgs = @('studio', 'setup')
     if ($script:UnslothVerbose) { $studioArgs += '--verbose' }
     $env:UNSLOTH_INSTALL_ROLLBACK_MANAGED = "1"
