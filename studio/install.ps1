@@ -30,7 +30,7 @@ function Write-Progress2($msg) { Write-Output "[TAURI:PROGRESS] $msg" }
 function Write-Diag($msg)     { Write-Output "[TAURI:DIAG] $msg" }
 function Write-Fail($msg)     { Write-Output "[TAURI:PROGRESS] ERROR: $msg"; exit 1 }
 
-$MinVersion  = "2026.5.3"
+$MinVersion  = "2026.5.5"
 $StudioHome  = "$env:USERPROFILE\.unsloth\studio"
 $VenvPath    = "$StudioHome\unsloth_studio"
 

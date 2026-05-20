@@ -40,7 +40,7 @@ fail()     { echo "[TAURI:PROGRESS] ERROR: $1" >&2; exit 1; }
 
 STUDIO_HOME="${HOME}/.unsloth/studio"
 VENV_PATH="${STUDIO_HOME}/unsloth_studio"
-MIN_VERSION="2026.5.3"
+MIN_VERSION="2026.5.5"
 
 # ── Prepare ──────────────────────────────────────────────────────────────────
 step "Preparing"
