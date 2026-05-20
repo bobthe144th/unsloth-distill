@@ -47,15 +47,15 @@ fn resolve_install_script(app: &AppHandle) -> Result<(PathBuf, Vec<String>), Str
     let mut args = vec!["--tauri".to_string()];
 
     if cfg!(debug_assertions) {
-        let repo_root = Path::new(env!("CARGO_MANIFEST_DIR"))
+        // Scripts live in studio/ (one level up from studio/src-tauri/).
+        let studio_dir = Path::new(env!("CARGO_MANIFEST_DIR"))
             .parent() // studio/
-            .and_then(|p| p.parent()) // repo root
-            .ok_or("Cannot resolve repo root from CARGO_MANIFEST_DIR")?;
+            .ok_or("Cannot resolve studio/ from CARGO_MANIFEST_DIR")?;
 
         let script = if cfg!(unix) {
-            repo_root.join("install.sh")
+            studio_dir.join("install.sh")
         } else {
-            repo_root.join("install.ps1")
+            studio_dir.join("install.ps1")
         };
 
         if !script.exists() {
