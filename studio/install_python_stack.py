@@ -26,6 +26,7 @@ if str(_BACKEND_DIR) not in sys.path:
     sys.path.insert(1, str(_BACKEND_DIR))
 
 from backend.utils.wheel_utils import (
+    direct_wheel_url,
     flash_attn_package_version,
     flash_attn_wheel_url,
     has_blackwell_gpu,
@@ -624,6 +625,59 @@ def _print_optional_install_failure(
         print(result.stdout.strip())
 
 
+_CAUSAL_CONV1D_RELEASE_TAG = "v1.6.1.post4"
+_CAUSAL_CONV1D_PACKAGE_VERSION = "1.6.1"
+
+
+def _ensure_causal_conv1d() -> None:
+    if os.getenv("UNSLOTH_STUDIO_SKIP_CAUSAL_CONV1D_INSTALL") == "1":
+        return
+    if NO_TORCH or IS_WINDOWS or IS_MACOS:
+        return
+    if (
+        subprocess.run(
+            [sys.executable, "-c", "import causal_conv1d"],
+            stdout = subprocess.DEVNULL,
+            stderr = subprocess.DEVNULL,
+        ).returncode
+        == 0
+    ):
+        return
+
+    env = probe_torch_wheel_env()
+    wheel_url = (
+        direct_wheel_url(
+            filename_prefix = "causal_conv1d",
+            package_version = _CAUSAL_CONV1D_PACKAGE_VERSION,
+            release_tag = _CAUSAL_CONV1D_RELEASE_TAG,
+            release_base_url = "https://github.com/Dao-AILab/causal-conv1d/releases/download",
+            env = env,
+        )
+        if env
+        else None
+    )
+    if wheel_url and url_exists(wheel_url):
+        for installer, wheel_result in install_wheel(
+            wheel_url,
+            python_executable = sys.executable,
+            use_uv = USE_UV,
+            uv_needs_system = UV_NEEDS_SYSTEM,
+        ):
+            if wheel_result.returncode == 0:
+                return
+            _print_optional_install_failure(
+                f"Installing causal-conv1d prebuilt wheel with {installer}",
+                wheel_result,
+            )
+        _step("warning", "Continuing without causal-conv1d", _cyan)
+        return
+
+    if wheel_url is None:
+        _step("warning", "No compatible causal-conv1d prebuilt wheel found", _cyan)
+    else:
+        _step("warning", "No published causal-conv1d prebuilt wheel found", _cyan)
+
+
 def _flash_attn_install_disabled() -> bool:
     return os.getenv("UNSLOTH_STUDIO_SKIP_FLASHATTN_INSTALL") == "1"
 
@@ -1152,6 +1206,8 @@ def install_python_stack() -> int:
     if not IS_WINDOWS and not IS_MACOS and not NO_TORCH:
         _progress("flash-attn")
         _ensure_flash_attn()
+        _progress("causal-conv1d")
+        _ensure_causal_conv1d()
 
     # # 6. Patch: override llama_cpp.py with fix from unsloth-zoo  feature/llama-cpp-windows-support branch
     # patch_package_file(
